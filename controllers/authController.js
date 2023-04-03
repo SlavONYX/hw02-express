@@ -8,6 +8,8 @@ const User = require("../models/user")
 const { RequestError } = require("../helpers")
 const avatarsDir = path.join(__dirname, '../', 'public', 'avatars');
 const { TOKEN_KEY } = process.env
+const { v4: uuidv4 } = require('uuid');
+const { sendEmail } = require('../helpers')
 
 const register = async (req, res, next) => {
     const { email, password } = req.body
@@ -15,9 +17,16 @@ const register = async (req, res, next) => {
     if (existingUser) {
         throw RequestError(409, `Email in use`)
     }
+    const verificationToken = uuidv4()
     const avatarURL = gravatar.url(email, { protocol: 'https', s: '100' });
     const hashedPassword = await bcrypt.hash(password, 10)
-    const user = await User.create({ email, password: hashedPassword, avatarURL })
+    const mail = {
+        to: email,
+        subject: 'Verify your email',
+        html: `<a target="_blank" href="http://localhost:3000/users/verify/${verificationToken}">Verify your email</a>`
+    }
+    await sendEmail(mail)
+    const user = await User.create({ email, password: hashedPassword, avatarURL, verificationToken })
     res.status(201).json({
         email: user.email,
         subscription: user.subscription,
@@ -29,8 +38,8 @@ const login = async (req, res, next) => {
     const { email, password } = req.body
     const existingUser = await User.findOne({ email })
     const isPasswordValid = await bcrypt.compare(password, existingUser.password)
-    if (!isPasswordValid || !existingUser) {
-        throw RequestError(401, "Email or password is wrong")
+    if (!isPasswordValid || !existingUser || !existingUser.verify) {
+        throw RequestError(401, "Email or password is wrong or email is not verify")
     }
     const payload = {
         id: existingUser._id,
@@ -68,4 +77,44 @@ const avatars = async (req, res, next) => {
     }
 }
 
-module.exports = { register, login, logout, current, avatars }
+const verifyEmail = async (req, res) => {
+    const { verificationToken } = req.params
+    const user = await User.findOne({ verificationToken })
+    if (!user) {
+        throw RequestError(404, 'User not found')
+    }
+    await User.findByIdAndUpdate(user._id, { verify: true, verificationToken: null })
+    res.json({
+        message: 'Verification successful'
+    })
+}
+
+
+const secondaryVerify = async (req, res, next) => {
+    const { email } = req.body
+    const existingUser = await User.findOne({ email })
+
+    if (!existingUser) {
+        throw RequestError(400, `Missing required field email`)
+    }
+
+    if (existingUser.verify) {
+        throw RequestError(400, "Verification has already been passed")
+    }
+
+    const verificationToken = uuidv4()
+
+    const mail = {
+        to: email,
+        subject: 'Verify your email',
+        html: `<a target="_blank" href="http://localhost:3000/users/verify/${verificationToken}">Verify your email</a>`
+    }
+
+    await sendEmail(mail)
+    await User.findOneAndUpdate({ email }, { verify: false, verificationToken })
+
+    res.json({ message: "Verification email sent" })
+}
+
+
+module.exports = { register, login, logout, current, avatars, verifyEmail, secondaryVerify }

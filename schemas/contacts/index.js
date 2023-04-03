@@ -21,4 +21,10 @@ const loginSchema = Joi.object({
         .required(),
 })
 
-module.exports = { registerSchema, loginSchema }
+const verifySchema = Joi.object({
+    email: Joi.string()
+        .pattern(/[a-z0-9]+@[a-z]+\.[a-z]{2,3}/)
+        .required(),
+})
+
+module.exports = { registerSchema, loginSchema, verifySchema }
